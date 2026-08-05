@@ -1,0 +1,57 @@
+# Боевая сборка: бот + PostgreSQL + Redis.
+# Запуск: cp .env.example .env и docker compose up -d --build
+# Имена сервисов совпадают с значениями из .env.example (DB_HOST=postgres,
+# REDIS_URL=redis://redis:6379/0) — в Docker DNS решает имена контейнеров сам.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-sohrano}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-sohrano}
+      POSTGRES_DB: ${DB_NAME:-sohrano}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Бот ждёт именно готовности: без этого alembic упадёт на старте.
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-sohrano} -d ${DB_NAME:-sohrano}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Перебивает .env на случай локальных значений вроде localhost.
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      MEDIA_ROOT: /app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - media:/app/media
+
+volumes:
+  pgdata:
+  redisdata:
+  media:
